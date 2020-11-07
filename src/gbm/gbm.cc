@@ -1,22 +1,33 @@
 /*!
- * Copyright 2015 by Contributors
+ * Copyright 2015-2020 by Contributors
  * \file gbm.cc
  * \brief Registry of gradient boosters.
  */
-#include <xgboost/gbm.h>
 #include <dmlc/registry.h>
+#include <string>
+#include <vector>
+#include <memory>
+
+#include "xgboost/gbm.h"
+#include "xgboost/learner.h"
+#include "xgboost/generic_parameters.h"
 
 namespace dmlc {
 DMLC_REGISTRY_ENABLE(::xgboost::GradientBoosterReg);
 }  // namespace dmlc
 
 namespace xgboost {
-GradientBooster* GradientBooster::Create(const std::string& name) {
+GradientBooster* GradientBooster::Create(
+    const std::string& name,
+    GenericParameter const* generic_param,
+    LearnerModelParam const* learner_model_param) {
   auto *e = ::dmlc::Registry< ::xgboost::GradientBoosterReg>::Get()->Find(name);
   if (e == nullptr) {
     LOG(FATAL) << "Unknown gbm type " << name;
   }
-  return (e->body)();
+  auto p_bst =  (e->body)(learner_model_param);
+  p_bst->generic_param_ = generic_param;
+  return p_bst;
 }
 }  // namespace xgboost
 

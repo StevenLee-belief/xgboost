@@ -9,7 +9,7 @@ The purpose of this Vignette is to show you how to use **Xgboost** to discover a
 
 This Vignette is not about predicting anything (see [Xgboost presentation](https://github.com/dmlc/xgboost/blob/master/R-package/vignettes/xgboostPresentation.Rmd)). We will explain how to use **Xgboost** to highlight the *link* between the *features* of your data and the *outcome*.
 
-Pacakge loading:
+Package loading:
 
 
 ```r
@@ -52,7 +52,7 @@ The first step is to load `Arthritis` dataset in memory and wrap it with `data.t
 
 ```r
 data(Arthritis)
-df <- data.table(Arthritis, keep.rownames = F)
+df <- data.table(Arthritis, keep.rownames = FALSE)
 ```
 
 > `data.table` is 100% compliant with **R** `data.frame` but its syntax is more consistent and its performance for large dataset is [best in class](http://stackoverflow.com/questions/21435339/data-table-vs-dplyr-can-one-do-something-well-the-other-cant-or-does-poorly) (`dplyr` from **R** and `Pandas` from **Python** [included](https://github.com/Rdatatable/data.table/wiki/Benchmarks-%3A-Grouping)). Some parts of **Xgboost** **R** package use `data.table`.
@@ -222,7 +222,7 @@ The code below is very usual. For more information, you can look at the document
 
 ```r
 bst <- xgboost(data = sparse_matrix, label = output_vector, max.depth = 4,
-               eta = 1, nthread = 2, nround = 10,objective = "binary:logistic")
+               eta = 1, nthread = 2, nrounds = 10,objective = "binary:logistic")
 ```
 
 ```
@@ -244,7 +244,7 @@ A model which fits too well may [overfit](http://en.wikipedia.org/wiki/Overfitti
 
 > Here you can see the numbers decrease until line 7 and then increase.
 >
-> It probably means we are overfitting. To fix that I should reduce the number of rounds to `nround = 4`. I will let things like that because I don't really care for the purpose of this example :-)
+> It probably means we are overfitting. To fix that I should reduce the number of rounds to `nrounds = 4`. I will let things like that because I don't really care for the purpose of this example :-)
 
 Feature importance
 ------------------
@@ -368,7 +368,7 @@ print(c2)
 ## X-squared = 35.475, df = 35, p-value = 0.4458
 ```
 
-Pearson correlation between Age and illness disapearing is **35.48**.
+Pearson correlation between Age and illness disappearing is **35.48**.
 
 
 ```r
@@ -417,14 +417,14 @@ The case studied here is not enough complex to show that. Check [Kaggle website]
 
 Moreover, you can notice that even if we have added some not useful new features highly correlated with other features, the boosting tree algorithm have been able to choose the best one, which in this case is the Age.
 
-Linear model may not be that smart in this scenario.
+Linear models may not be that smart in this scenario.
 
 Special Note: What about Random Forests™?
 -----------------------------------------
 
 As you may know, [Random Forests™](http://en.wikipedia.org/wiki/Random_forest) algorithm is cousin with boosting and both are part of the [ensemble learning](http://en.wikipedia.org/wiki/Ensemble_learning) family.
 
-Both trains several decision trees for one dataset. The *main* difference is that in Random Forests™, trees are independent and in boosting, the tree `N+1` focus its learning on the loss (<=> what has not been well modeled by the tree `N`).
+Both train several decision trees for one dataset. The *main* difference is that in Random Forests™, trees are independent and in boosting, the tree `N+1` focus its learning on the loss (<=> what has not been well modeled by the tree `N`).
 
 This difference have an impact on a corner case in feature importance analysis: the *correlated features*.
 
@@ -448,7 +448,7 @@ train <- agaricus.train
 test <- agaricus.test
 
 #Random Forest™ - 1000 trees
-bst <- xgboost(data = train$data, label = train$label, max.depth = 4, num_parallel_tree = 1000, subsample = 0.5, colsample_bytree =0.5, nround = 1, objective = "binary:logistic")
+bst <- xgboost(data = train$data, label = train$label, max.depth = 4, num_parallel_tree = 1000, subsample = 0.5, colsample_bytree =0.5, nrounds = 1, objective = "binary:logistic")
 ```
 
 ```
@@ -457,7 +457,7 @@ bst <- xgboost(data = train$data, label = train$label, max.depth = 4, num_parall
 
 ```r
 #Boosting - 3 rounds
-bst <- xgboost(data = train$data, label = train$label, max.depth = 4, nround = 3, objective = "binary:logistic")
+bst <- xgboost(data = train$data, label = train$label, max.depth = 4, nrounds = 3, objective = "binary:logistic")
 ```
 
 ```

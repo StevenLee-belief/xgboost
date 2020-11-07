@@ -14,7 +14,7 @@
 \item{...}{not currently used}
 }
 \description{
-Print information about xgb.DMatrix. 
+Print information about xgb.DMatrix.
 Currently it displays dimensions and presence of info-fields and colnames.
 }
 \examples{
@@ -26,4 +26,3 @@ dtrain
 print(dtrain, verbose=TRUE)
 
 }
-

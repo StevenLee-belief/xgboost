@@ -17,7 +17,7 @@
 Prints formatted results of \code{xgb.cv}.
 }
 \details{
-When not verbose, it would only print the evaluation results, 
+When not verbose, it would only print the evaluation results,
 including the best iteration (when available).
 }
 \examples{
@@ -29,4 +29,3 @@ print(cv)
 print(cv, verbose=TRUE)
 
 }
-

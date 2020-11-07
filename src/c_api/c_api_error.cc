@@ -3,16 +3,17 @@
  * \file c_api_error.cc
  * \brief C error handling
  */
+#include <dmlc/thread_local.h>
+#include "xgboost/c_api.h"
 #include "./c_api_error.h"
-#include "../common/thread_local.h"
 
 struct XGBAPIErrorEntry {
   std::string last_error;
 };
 
-typedef xgboost::common::ThreadLocalStore<XGBAPIErrorEntry> XGBAPIErrorStore;
+using XGBAPIErrorStore = dmlc::ThreadLocalStore<XGBAPIErrorEntry>;
 
-const char *XGBGetLastError() {
+XGB_DLL const char *XGBGetLastError() {
   return XGBAPIErrorStore::Get()->last_error.c_str();
 }
 

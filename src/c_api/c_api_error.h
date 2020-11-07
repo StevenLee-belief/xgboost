@@ -8,13 +8,27 @@
 
 #include <dmlc/base.h>
 #include <dmlc/logging.h>
-#include <xgboost/c_api.h>
 
 /*! \brief  macro to guard beginning and end section of all functions */
+#ifdef LOG_CAPI_INVOCATION
+#define API_BEGIN() \
+  LOG(CONSOLE) << "[XGBoost C API invocation] " << __PRETTY_FUNCTION__; try {
+#else  // LOG_CAPI_INVOCATION
 #define API_BEGIN() try {
+#endif  // LOG_CAPI_INVOCATION
+
 /*! \brief every function starts with API_BEGIN();
      and finishes with API_END() or API_END_HANDLE_ERROR */
-#define API_END() } catch(dmlc::Error &_except_) { return XGBAPIHandleException(_except_); } return 0;  // NOLINT(*)
+#define API_END()                                                              \
+  } catch (dmlc::Error & _except_) {                                           \
+    return XGBAPIHandleException(_except_);                                    \
+  } catch (std::exception const &_except_) {                                   \
+    return XGBAPIHandleException(dmlc::Error(_except_.what()));                \
+  }                                                                            \
+  return 0; // NOLINT(*)
+
+#define CHECK_HANDLE() if (handle == nullptr) \
+  LOG(FATAL) << "DMatrix/Booster has not been intialized or has already been disposed.";
 /*!
  * \brief every function starts with API_BEGIN();
  *   and finishes with API_END() or API_END_HANDLE_ERROR
@@ -28,7 +42,7 @@
  */
 void XGBAPISetLastError(const char* msg);
 /*!
- * \brief handle exception throwed out
+ * \brief handle exception thrown out
  * \param e the exception
  * \return the return value of API after exception is handled
  */

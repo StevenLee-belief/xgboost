@@ -15,12 +15,16 @@
  */
 package ml.dmlc.xgboost4j.java;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.*;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 
 /**
  * trainer for xgboost
@@ -58,31 +62,96 @@ public class XGBoost {
   }
 
   /**
-   * Train a booster with given parameters.
+   * Train a booster given parameters.
    *
-   * @param dtrain Data to be trained.
-   * @param params Booster params.
-   * @param round  Number of boosting iterations.
+   * @param dtrain  Data to be trained.
+   * @param params  Parameters.
+   * @param round   Number of boosting iterations.
    * @param watches a group of items to be evaluated during training, this allows user to watch
-   *               performance on the validation set.
-   * @param obj    customized objective (set to null if not used)
-   * @param eval   customized evaluation (set to null if not used)
-   * @return trained booster
-   * @throws XGBoostError native error
+   *                performance on the validation set.
+   * @param obj     customized objective
+   * @param eval    customized evaluation
+   * @return The trained booster.
    */
   public static Booster train(
+          DMatrix dtrain,
+          Map<String, Object> params,
+          int round,
+          Map<String, DMatrix> watches,
+          IObjective obj,
+          IEvaluation eval) throws XGBoostError {
+    return train(dtrain, params, round, watches, null, obj, eval, 0);
+  }
+
+  /**
+   * Train a booster given parameters.
+   *
+   * @param dtrain  Data to be trained.
+   * @param params  Parameters.
+   * @param round   Number of boosting iterations.
+   * @param watches a group of items to be evaluated during training, this allows user to watch
+   *                performance on the validation set.
+   * @param metrics array containing the evaluation metrics for each matrix in watches for each
+   *                iteration
+   * @param earlyStoppingRound if non-zero, training would be stopped
+   *                           after a specified number of consecutive
+   *                           increases in any evaluation metric.
+   * @param obj     customized objective
+   * @param eval    customized evaluation
+   * @return The trained booster.
+   */
+  public static Booster train(
+          DMatrix dtrain,
+          Map<String, Object> params,
+          int round,
+          Map<String, DMatrix> watches,
+          float[][] metrics,
+          IObjective obj,
+          IEvaluation eval,
+          int earlyStoppingRound) throws XGBoostError {
+    return train(dtrain, params, round, watches, metrics, obj, eval, earlyStoppingRound, null);
+  }
+
+  private static void saveCheckpoint(
+          Booster booster,
+          int iter,
+          Set<Integer> checkpointIterations,
+          ExternalCheckpointManager ecm) throws XGBoostError {
+    try {
+      if (checkpointIterations.contains(iter)) {
+        ecm.updateCheckpoint(booster);
+      }
+    } catch (Exception e) {
+      logger.error("failed to save checkpoint in XGBoost4J at iteration " + iter, e);
+      throw new XGBoostError("failed to save checkpoint in XGBoost4J at iteration" + iter, e);
+    }
+  }
+
+  public static Booster trainAndSaveCheckpoint(
       DMatrix dtrain,
       Map<String, Object> params,
-      int round,
+      int numRounds,
       Map<String, DMatrix> watches,
+      float[][] metrics,
       IObjective obj,
-      IEvaluation eval) throws XGBoostError {
-
+      IEvaluation eval,
+      int earlyStoppingRounds,
+      Booster booster,
+      int checkpointInterval,
+      String checkpointPath,
+      FileSystem fs) throws XGBoostError, IOException {
     //collect eval matrixs
     String[] evalNames;
     DMatrix[] evalMats;
+    float bestScore;
+    int bestIteration;
     List<String> names = new ArrayList<String>();
     List<DMatrix> mats = new ArrayList<DMatrix>();
+    Set<Integer> checkpointIterations = new HashSet<>();
+    ExternalCheckpointManager ecm = null;
+    if (checkpointPath != null) {
+      ecm = new ExternalCheckpointManager(checkpointPath, fs);
+    }
 
     for (Map.Entry<String, DMatrix> evalEntry : watches.entrySet()) {
       names.add(evalEntry.getKey());
@@ -91,10 +160,17 @@ public class XGBoost {
 
     evalNames = names.toArray(new String[names.size()]);
     evalMats = mats.toArray(new DMatrix[mats.size()]);
+    if (isMaximizeEvaluation(params)) {
+      bestScore = -Float.MAX_VALUE;
+    } else {
+      bestScore = Float.MAX_VALUE;
+    }
+    bestIteration = 0;
+    metrics = metrics == null ? new float[evalNames.length][numRounds] : metrics;
 
     //collect all data matrixs
     DMatrix[] allMats;
-    if (evalMats != null && evalMats.length > 0) {
+    if (evalMats.length > 0) {
       allMats = new DMatrix[evalMats.length + 1];
       allMats[0] = dtrain;
       System.arraycopy(evalMats, 0, allMats, 1, evalMats.length);
@@ -104,38 +180,171 @@ public class XGBoost {
     }
 
     //initialize booster
-    Booster booster = new Booster(params, allMats);
+    if (booster == null) {
+      // Start training on a new booster
+      booster = new Booster(params, allMats);
+      booster.loadRabitCheckpoint();
+    } else {
+      // Start training on an existing booster
+      booster.setParams(params);
+    }
 
-    int version = booster.loadRabitCheckpoint();
+    if (ecm != null) {
+      checkpointIterations = new HashSet<>(ecm.getCheckpointRounds(checkpointInterval, numRounds));
+    }
 
-    //begin to train
-    for (int iter = version / 2; iter < round; iter++) {
-      if (version % 2 == 0) {
+    // begin to train
+    for (int iter = booster.getVersion() / 2; iter < numRounds; iter++) {
+      if (booster.getVersion() % 2 == 0) {
         if (obj != null) {
           booster.update(dtrain, obj);
         } else {
           booster.update(dtrain, iter);
         }
+        saveCheckpoint(booster, iter, checkpointIterations, ecm);
         booster.saveRabitCheckpoint();
-        version += 1;
       }
 
       //evaluation
-      if (evalMats != null && evalMats.length > 0) {
+      if (evalMats.length > 0) {
+        float[] metricsOut = new float[evalMats.length];
         String evalInfo;
         if (eval != null) {
-          evalInfo = booster.evalSet(evalMats, evalNames, eval);
+          evalInfo = booster.evalSet(evalMats, evalNames, eval, metricsOut);
         } else {
-          evalInfo = booster.evalSet(evalMats, evalNames, iter);
+          evalInfo = booster.evalSet(evalMats, evalNames, iter, metricsOut);
         }
-        if (Rabit.getRank() == 0) {
-          Rabit.trackerPrint(evalInfo + '\n');
+        for (int i = 0; i < metricsOut.length; i++) {
+          metrics[i][iter] = metricsOut[i];
+        }
+
+        // If there is more than one evaluation datasets, the last one would be used
+        // to determinate early stop.
+        float score = metricsOut[metricsOut.length - 1];
+        if (isMaximizeEvaluation(params)) {
+          // Update best score if the current score is better (no update when equal)
+          if (score > bestScore) {
+            bestScore = score;
+            bestIteration = iter;
+          }
+        } else {
+          if (score < bestScore) {
+            bestScore = score;
+            bestIteration = iter;
+          }
+        }
+        if (earlyStoppingRounds > 0) {
+          if (shouldEarlyStop(earlyStoppingRounds, iter, bestIteration)) {
+            Rabit.trackerPrint(String.format(
+                    "early stopping after %d rounds away from the best iteration",
+                    earlyStoppingRounds));
+            break;
+          }
+        }
+        if (Rabit.getRank() == 0 && shouldPrint(params, iter)) {
+          if (shouldPrint(params, iter)){
+            Rabit.trackerPrint(evalInfo + '\n');
+          }
         }
       }
       booster.saveRabitCheckpoint();
-      version += 1;
     }
     return booster;
+  }
+
+  /**
+   * Train a booster given parameters.
+   *
+   * @param dtrain  Data to be trained.
+   * @param params  Parameters.
+   * @param round   Number of boosting iterations.
+   * @param watches a group of items to be evaluated during training, this allows user to watch
+   *                performance on the validation set.
+   * @param metrics array containing the evaluation metrics for each matrix in watches for each
+   *                iteration
+   * @param earlyStoppingRounds if non-zero, training would be stopped
+   *                           after a specified number of consecutive
+   *                           goes to the unexpected direction in any evaluation metric.
+   * @param obj     customized objective
+   * @param eval    customized evaluation
+   * @param booster train from scratch if set to null; train from an existing booster if not null.
+   * @return The trained booster.
+   */
+  public static Booster train(
+          DMatrix dtrain,
+          Map<String, Object> params,
+          int round,
+          Map<String, DMatrix> watches,
+          float[][] metrics,
+          IObjective obj,
+          IEvaluation eval,
+          int earlyStoppingRounds,
+          Booster booster) throws XGBoostError {
+    try {
+      return trainAndSaveCheckpoint(dtrain, params, round, watches, metrics, obj, eval,
+              earlyStoppingRounds, booster,
+              -1, null, null);
+    } catch (IOException e) {
+      logger.error("training failed in xgboost4j", e);
+      throw new XGBoostError("training failed in xgboost4j ", e);
+    }
+  }
+
+  private static Integer tryGetIntFromObject(Object o) {
+    if (o instanceof Integer) {
+      return (int)o;
+    } else if (o instanceof String) {
+      try {
+        return Integer.parseInt((String)o);
+      } catch (NumberFormatException e) {
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
+
+  private static boolean shouldPrint(Map<String, Object> params, int iter) {
+    Object silent = params.get("silent");
+    Integer silentInt = tryGetIntFromObject(silent);
+    if (silent != null) {
+      if (silent.equals("true") || silent.equals("True")
+              || (silentInt != null && silentInt != 0)) {
+        return false;  // "silent" will stop printing, otherwise go look at "verbose_eval"
+      }
+    }
+
+    Object verboseEval = params.get("verbose_eval");
+    Integer verboseEvalInt = tryGetIntFromObject(verboseEval);
+    if (verboseEval == null) {
+      return true; // Default to printing evalInfo
+    } else if (verboseEval.equals("false") || verboseEval.equals("False")) {
+      return false;
+    } else if (verboseEvalInt != null) {
+      if (verboseEvalInt == 0) {
+        return false;
+      } else {
+        return iter % verboseEvalInt == 0;
+      }
+    } else {
+      return true; // Don't understand the option, default to printing
+    }
+  }
+
+  static boolean shouldEarlyStop(int earlyStoppingRounds, int iter, int bestIteration) {
+    return iter - bestIteration >= earlyStoppingRounds;
+  }
+
+  private static boolean isMaximizeEvaluation(Map<String, Object> params) {
+    try {
+      String maximize = String.valueOf(params.get("maximize_evaluation_metrics"));
+      assert(maximize != null);
+      return Boolean.valueOf(maximize);
+    } catch (Exception ex) {
+      logger.error("maximize_evaluation_metrics has to be specified for enabling early stop," +
+              " allowed value: true/false", ex);
+      throw ex;
+    }
   }
 
   /**

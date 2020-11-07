@@ -28,7 +28,7 @@ class DensifyParser : public dmlc::Parser<IndexType> {
     LOG(INFO) << batch.size;
     dense_index_.resize(num_col_ * batch.size);
     dense_value_.resize(num_col_ * batch.size);
-    std::fill(dense_value_.begin(), dense_value_.end(), 0.0f);
+    std::fill(dense_value_.begin(), dense_value_.end(), 0.0);
     offset_.resize(batch.size + 1);
     offset_[0] = 0;
 
@@ -66,10 +66,10 @@ class DensifyParser : public dmlc::Parser<IndexType> {
   uint32_t num_col_;
   std::vector<size_t> offset_;
   std::vector<IndexType> dense_index_;
-  std::vector<float> dense_value_;
+  std::vector<xgboost::bst_float> dense_value_;
 };
 
-template<typename IndexType>
+template<typename IndexType, typename DType = real_t>
 Parser<IndexType> *
 CreateDenseLibSVMParser(const std::string& path,
                         const std::map<std::string, std::string>& args,
@@ -82,5 +82,6 @@ CreateDenseLibSVMParser(const std::string& path,
 }
 }  // namespace data
 
-DMLC_REGISTER_DATA_PARSER(uint32_t, dense_libsvm, data::CreateDenseLibSVMParser<uint32_t>);
+DMLC_REGISTER_DATA_PARSER(uint32_t, real_t, dense_libsvm,
+  data::CreateDenseLibSVMParser<uint32_t __DMLC_COMMA real_t>);
 }  // namespace dmlc

@@ -10,107 +10,127 @@
 XGBoost4J is the JVM package of xgboost. It brings all the optimizations
 and power xgboost into JVM ecosystem.
 
-- Train XGBoost models on scala and java with easy customizations.
-- Run distributed xgboost natively on jvm frameworks such as Flink and Spark.
+- Train XGBoost models in scala and java with easy customizations.
+- Run distributed xgboost natively on jvm frameworks such as
+Apache Flink and Apache Spark.
 
 You can find more about XGBoost on [Documentation](https://xgboost.readthedocs.org/en/latest/jvm/index.html) and [Resource Page](../demo/README.md).
 
-## Hello World
-**NOTE on LIBSVM Format**: 
-- Use *1-based* ascending indexes for the LIBSVM format in distributed training mode - 
-  - Spark does the internal conversion, and does not accept formats that are 0-based
-- Whereas, use *0-based* indexes format when predicting in normal mode - for instance, while using the saved model in the Python package
+## Add Maven Dependency
 
-### XGBoost Scala
-```scala
-import ml.dmlc.xgboost4j.scala.DMatrix
-import ml.dmlc.xgboost4j.scala.XGBoost
+XGBoost4J, XGBoost4J-Spark, etc. in maven repository is compiled with g++-4.8.5.
 
-object XGBoostScalaExample {
-  def main(args: Array[String]) {
-    // read trainining data, available at xgboost/demo/data
-    val trainData =
-      new DMatrix("/path/to/agaricus.txt.train")
-    // define parameters
-    val paramMap = List(
-      "eta" -> 0.1,
-      "max_depth" -> 2,
-      "objective" -> "binary:logistic").toMap
-    // number of iterations
-    val round = 2
-    // train the model
-    val model = XGBoost.train(trainData, paramMap, round)
-    // run prediction
-    val predTrain = model.predict(trainData)
-    // save model to the file.
-    model.saveModel("/local/path/to/model")
-  }
-}
+### Access release version
+
+<b>Maven</b>
+
+```
+<dependency>
+    <groupId>ml.dmlc</groupId>
+    <artifactId>xgboost4j_2.12</artifactId>
+    <version>latest_version_num</version>
+</dependency>
+<dependency>
+    <groupId>ml.dmlc</groupId>
+    <artifactId>xgboost4j-spark_2.12</artifactId>
+    <version>latest_version_num</version>
+</dependency>
 ```
 
-### XGBoost Spark
-```scala
-import org.apache.spark.SparkContext
-import org.apache.spark.mllib.util.MLUtils
-import ml.dmlc.xgboost4j.scala.spark.XGBoost
-
-object DistTrainWithSpark {
-  def main(args: Array[String]): Unit = {
-    if (args.length != 3) {
-      println(
-        "usage: program  num_of_rounds training_path model_path")
-      sys.exit(1)
-    }
-    // if you do not want to use KryoSerializer in Spark, you can ignore the related configuration
-    val sparkConf = new SparkConf().setMaster("local[*]").setAppName("XGBoost-spark-example")
-      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    sparkConf.registerKryoClasses(Array(classOf[Booster]))
-    val sc = new SparkContext(sparkConf)
-    val inputTrainPath = args(1)
-    val outputModelPath = args(2)
-    // number of iterations
-    val numRound = args(0).toInt
-    val trainRDD = MLUtils.loadLibSVMFile(sc, inputTrainPath)
-    // training parameters
-    val paramMap = List(
-      "eta" -> 0.1f,
-      "max_depth" -> 2,
-      "objective" -> "binary:logistic").toMap
-    // use 5 distributed workers to train the model
-    // useExternalMemory indicates whether 
-    val model = XGBoost.train(trainRDD, paramMap, numRound, nWorkers = 5, useExternalMemory = true)
-    // save model to HDFS path
-    model.saveModelToHadoop(outputModelPath)
-  }
-}
+<b>sbt</b>
+```sbt
+libraryDependencies ++= Seq(
+  "ml.dmlc" %% "xgboost4j" % "latest_version_num",
+  "ml.dmlc" %% "xgboost4j-spark" % "latest_version_num"
+)
 ```
 
-### XGBoost Flink
-```scala
-import ml.dmlc.xgboost4j.scala.flink.XGBoost
-import org.apache.flink.api.scala._
-import org.apache.flink.api.scala.ExecutionEnvironment
-import org.apache.flink.ml.MLUtils
+For the latest release version number, please check [here](https://github.com/dmlc/xgboost/releases).
 
-object DistTrainWithFlink {
-  def main(args: Array[String]) {
-    val env: ExecutionEnvironment = ExecutionEnvironment.getExecutionEnvironment
-    // read trainining data
-    val trainData =
-      MLUtils.readLibSVM(env, "/path/to/data/agaricus.txt.train")
-    // define parameters
-    val paramMap = List(
-      "eta" -> 0.1,
-      "max_depth" -> 2,
-      "objective" -> "binary:logistic").toMap
-    // number of iterations
-    val round = 2
-    // train the model
-    val model = XGBoost.train(trainData, paramMap, round)
-    val predTrain = model.predict(trainData.map{x => x.vector})
-    model.saveModelToHadoop("file:///path/to/xgboost.model")
-  }
-}
+To enable the GPU algorithm (`tree_method='gpu_hist'`), use artifacts `xgboost4j-gpu_2.12` and `xgboost4j-spark-gpu_2.12` instead.
+
+### Access SNAPSHOT version
+
+First add the following Maven repository hosted by the XGBoost project:
+
+<b>Maven</b>:
+
+```xml
+<repository>
+  <id>XGBoost4J Snapshot Repo</id>
+  <name>XGBoost4J Snapshot Repo</name>
+  <url>https://s3-us-west-2.amazonaws.com/xgboost-maven-repo/snapshot/</url>
+</repository>
 ```
 
+<b>sbt</b>:
 
+```sbt
+resolvers += "XGBoost4J Snapshot Repo" at "https://s3-us-west-2.amazonaws.com/xgboost-maven-repo/snapshot/"
+```
+
+Then add XGBoost4J as a dependency:
+
+<b>Maven</b>
+
+```
+<dependency>
+    <groupId>ml.dmlc</groupId>
+    <artifactId>xgboost4j_2.12</artifactId>
+    <version>latest_version_num-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>ml.dmlc</groupId>
+    <artifactId>xgboost4j-spark_2.12</artifactId>
+    <version>latest_version_num-SNAPSHOT</version>
+</dependency>
+```
+
+<b>sbt</b>
+```sbt
+libraryDependencies ++= Seq(
+  "ml.dmlc" %% "xgboost4j" % "latest_version_num-SNAPSHOT",
+  "ml.dmlc" %% "xgboost4j-spark" % "latest_version_num-SNAPSHOT"
+)
+```
+
+For the latest release version number, please check [the repository listing](https://s3-us-west-2.amazonaws.com/xgboost-maven-repo/list.html).
+
+To enable the GPU algorithm (`tree_method='gpu_hist'`), use artifacts `xgboost4j-gpu_2.12` and `xgboost4j-spark-gpu_2.12` instead.
+
+## Examples
+
+Full code examples for Scala, Java, Apache Spark, and Apache Flink can
+be found in the [examples package](https://github.com/dmlc/xgboost/tree/master/jvm-packages/xgboost4j-example).
+
+**NOTE on LIBSVM Format**:
+
+There is an inconsistent issue between XGBoost4J-Spark and other language bindings of XGBoost.
+
+When users use Spark to load trainingset/testset in LibSVM format with the following code snippet:
+
+```scala
+spark.read.format("libsvm").load("trainingset_libsvm")
+```
+
+Spark assumes that the dataset is 1-based indexed. However, when you do prediction with other bindings of XGBoost (e.g. Python API of XGBoost), XGBoost assumes that the dataset is 0-based indexed. It creates a pitfall for the users who train model with Spark but predict with the dataset in the same format in other bindings of XGBoost.
+
+## Development
+
+You can build/package xgboost4j locally with the following steps:
+
+**Linux:**
+1. Ensure [Docker for Linux](https://docs.docker.com/install/) is installed.
+2. Clone this repo: `git clone --recursive https://github.com/dmlc/xgboost.git`
+3. Run the following command:
+  - With Tests: `./xgboost/jvm-packages/dev/build-linux.sh`
+  - Skip Tests: `./xgboost/jvm-packages/dev/build-linux.sh --skip-tests`
+
+**Windows:**
+1. Ensure [Docker for Windows](https://docs.docker.com/docker-for-windows/install/) is installed.
+2. Clone this repo: `git clone --recursive https://github.com/dmlc/xgboost.git`
+3. Run the following command:
+  - With Tests: `.\xgboost\jvm-packages\dev\build-linux.cmd`
+  - Skip Tests: `.\xgboost\jvm-packages\dev\build-linux.cmd --skip-tests`
+
+*Note: this will create jars for deployment on Linux machines.*

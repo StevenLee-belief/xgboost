@@ -1,90 +1,105 @@
 #!/bin/bash
 
-if [ ${TASK} == "lint" ]; then
-    make lint || exit -1
-    echo "Check documentations..."
-    make doxygen 2>log.txt
-    (cat log.txt| grep -v ENABLE_PREPROCESSING |grep -v "unsupported tag") > logclean.txt
-    echo "---------Error Log----------"
-    cat logclean.txt
-    echo "----------------------------"
-    (cat logclean.txt|grep warning) && exit -1
-    (cat logclean.txt|grep error) && exit -1
-    exit 0
-fi
-
-cp make/travis.mk config.mk
 make -f dmlc-core/scripts/packages.mk lz4
 
+source $HOME/miniconda/bin/activate
 
-if [ ${TRAVIS_OS_NAME} == "osx" ]; then
-    echo "USE_OPENMP=0" >> config.mk
+if [ ${TASK} == "python_sdist_test" ]; then
+    set -e
+
+    conda activate python3
+    python --version
+    cmake --version
+
+    make pippack
+    python -m pip install xgboost-*.tar.gz -v --user
+    python -c 'import xgboost' || exit -1
 fi
 
 if [ ${TASK} == "python_test" ]; then
-    make all || exit -1
-    echo "-------------------------------"
-    source activate python3
-    python --version
-    conda install numpy scipy pandas matplotlib nose scikit-learn
-    python -m pip install graphviz
-    python -m nose tests/python || exit -1
-    source activate python2
-    echo "-------------------------------"
-    python --version
-    conda install numpy scipy pandas matplotlib nose scikit-learn
-    python -m pip install graphviz
-    python -m nose tests/python || exit -1
-    exit 0
-fi
+    if grep -n -R '<<<.*>>>\(.*\)' src include | grep --invert "NOLINT"; then
+        echo 'Do not use raw CUDA execution configuration syntax with <<<blocks, threads>>>.' \
+             'try `dh::LaunchKernel`'
+        exit -1
+    fi
 
-if [ ${TASK} == "python_lightweight_test" ]; then
-    make all || exit -1
-    echo "-------------------------------"
-    source activate python3
-    python --version
-    conda install numpy scipy nose
-    python -m pip install graphviz
-    python -m nose tests/python || exit -1
-    source activate python2
-    echo "-------------------------------"
-    python --version
-    conda install numpy scipy nose
-    python -m pip install graphviz
-    python -m nose tests/python || exit -1
-    python -m pip install flake8
-    flake8 --ignore E501 python-package || exit -1
-    flake8 --ignore E501 tests/python || exit -1
-    exit 0
-fi
-
-if [ ${TASK} == "r_test" ]; then
     set -e
-    export _R_CHECK_TIMINGS_=0
-    export R_BUILD_ARGS="--no-build-vignettes --no-manual"
-    export R_CHECK_ARGS="--no-vignettes --no-manual"
 
-    curl -OL http://raw.github.com/craigcitro/r-travis/master/scripts/travis-tool.sh
-    chmod 755 ./travis-tool.sh
-    ./travis-tool.sh bootstrap
-    make Rpack
-    cd ./xgboost
-    ../travis-tool.sh install_deps
-    ../travis-tool.sh run_tests
-    exit 0
+
+    # Build binary wheel
+    if [ ${TRAVIS_CPU_ARCH} == "arm64" ]; then
+      # Build manylinux2014 wheel on ARM64
+      tests/ci_build/ci_build.sh aarch64 docker tests/ci_build/build_via_cmake.sh --conda-env=aarch64_test
+      tests/ci_build/ci_build.sh aarch64 docker bash -c "cd build && ctest --extra-verbose"
+      tests/ci_build/ci_build.sh aarch64 docker bash -c "cd python-package && rm -rf dist/* && python setup.py bdist_wheel --universal"
+      TAG=manylinux2014_aarch64
+      tests/ci_build/ci_build.sh aarch64 docker python tests/ci_build/rename_whl.py python-package/dist/*.whl ${TRAVIS_COMMIT} ${TAG}
+    else
+      rm -rf build
+      mkdir build && cd build
+      conda activate python3
+      cmake --version
+      cmake .. -DUSE_OPENMP=ON -DCMAKE_VERBOSE_MAKEFILE=ON
+      make -j$(nproc)
+      cd ../python-package
+      python setup.py bdist_wheel
+      cd ..
+      TAG=macosx_10_13_x86_64.macosx_10_14_x86_64.macosx_10_15_x86_64
+      python tests/ci_build/rename_whl.py python-package/dist/*.whl ${TRAVIS_COMMIT} ${TAG}
+    fi
+
+    # Run unit tests
+    echo "------------------------------"
+    if [ ${TRAVIS_CPU_ARCH} == "arm64" ]; then
+        tests/ci_build/ci_build.sh aarch64 docker \
+          bash -c "source activate aarch64_test && python -m pip install ./python-package/dist/xgboost-*-py3-none-${TAG}.whl && python -m pytest -v -s -rxXs --durations=0 --fulltrace tests/python/test_basic.py tests/python/test_basic_models.py tests/python/test_model_compatibility.py --cov=python-package/xgboost"
+    else
+        conda env create -n cpu_test --file=tests/ci_build/conda_env/macos_cpu_test.yml
+        conda activate cpu_test
+        python -m pip install ./python-package/dist/xgboost-*-py3-none-${TAG}.whl
+        conda --version
+        python --version
+        python -m pytest -v -s -rxXs --durations=0 --fulltrace tests/python --cov=python-package/xgboost || exit -1
+    fi
+    conda activate python3
+    codecov
+
+    # Deploy binary wheel to S3
+    if [ "${TRAVIS_PULL_REQUEST}" != "false" ]
+    then
+        S3_DEST="s3://xgboost-nightly-builds/PR-${TRAVIS_PULL_REQUEST}/"
+    else
+        if [ "${TRAVIS_BRANCH}" == "master" ]
+        then
+            S3_DEST="s3://xgboost-nightly-builds/"
+        elif [ -z "${TRAVIS_TAG}" ]
+        then
+            S3_DEST="s3://xgboost-nightly-builds/${TRAVIS_BRANCH}/"
+        fi
+    fi
+    python -m awscli s3 cp python-package/dist/*.whl "${S3_DEST}" --acl public-read || true
 fi
 
 if [ ${TASK} == "java_test" ]; then
-    set -e
-    make jvm-packages
+    export RABIT_MOCK=ON
+    conda activate python3
     cd jvm-packages
-    mvn clean install -DskipTests=true
-    mvn test
+    mvn -q clean install -DskipTests -Dmaven.test.skip
+    mvn -q test
 fi
 
-if [ ${TASK} == "cmake_test" ]; then
-    mkdir build
-    cd build
-    cmake ..
-    make
+if [ ${TASK} == "s390x_test" ]; then
+    set -e
+
+    # Build and run C++ tests
+    rm -rf build
+    mkdir build && cd build
+    cmake .. -DCMAKE_VERBOSE_MAKEFILE=ON -DGOOGLE_TEST=ON -DUSE_OPENMP=ON -DUSE_DMLC_GTEST=ON -GNinja
+    time ninja -v
+    ./testxgboost
+
+    # Run model compatibility tests
+    cd ..
+    python3 -m pip install --user pytest hypothesis
+    PYTHONPATH=./python-package python3 -m pytest --fulltrace -v -rxXs tests/python/ -k 'test_model'
 fi

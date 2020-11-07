@@ -57,7 +57,7 @@ drat:::addRepo("dmlc")
 install.packages("xgboost", repos="http://dmlc.ml/drat/", type = "source")
 ```
 
-> *Windows* user will need to install [Rtools](http://cran.r-project.org/bin/windows/Rtools/) first.
+> *Windows* user will need to install [Rtools](https://cran.r-project.org/bin/windows/Rtools/) first.
 
 ### CRAN version
 
@@ -68,7 +68,7 @@ The version 0.4-2 is on CRAN, and you can install it by:
 install.packages("xgboost")
 ```
 
-Formerly available versions can be obtained from the CRAN [archive](http://cran.r-project.org/src/contrib/Archive/xgboost)
+Formerly available versions can be obtained from the CRAN [archive](https://cran.r-project.org/src/contrib/Archive/xgboost/)
 
 ## Learning
 
@@ -107,7 +107,7 @@ train <- agaricus.train
 test <- agaricus.test
 ```
 
-> In the real world, it would be up to you to make this division between `train` and `test` data. The way to do it is out of the purpose of this article, however `caret` package may [help](http://topepo.github.io/caret/splitting.html).
+> In the real world, it would be up to you to make this division between `train` and `test` data. The way to do it is out of the purpose of this article, however `caret` package may [help](http://topepo.github.io/caret/data-splitting.html).
 
 Each variable is a `list` containing two things, `label` and `data`:
 
@@ -294,7 +294,7 @@ bst <- xgb.train(data=dtrain, max_depth=2, eta=1, nthread = 2, nrounds=2, watchl
 
 Both training and test error related metrics are very similar, and in some way, it makes sense: what we have learned from the training dataset matches the observations from the test dataset.
 
-If with your own dataset you have not such results, you should think about how you divided your dataset in training and test. May be there is something to fix. Again, `caret` package may [help](http://topepo.github.io/caret/splitting.html).
+If with your own dataset you have not such results, you should think about how you divided your dataset in training and test. May be there is something to fix. Again, `caret` package may [help](http://topepo.github.io/caret/data-splitting.html).
 
 For a better understanding of the learning progression, you may want to have some specific metric or even use multiple evaluation metrics.
 
@@ -313,7 +313,7 @@ Until now, all the learnings we have performed were based on boosting trees. **X
 bst <- xgb.train(data=dtrain, booster = "gblinear", max_depth=2, nthread = 2, nrounds=2, watchlist=watchlist, eval_metric = "error", eval_metric = "logloss", objective = "binary:logistic")
 ```
 
-In this specific case, *linear boosting* gets sligtly better performance metrics than decision trees based algorithm.
+In this specific case, *linear boosting* gets slightly better performance metrics than decision trees based algorithm.
 
 In simple cases, it will happen because there is nothing better than a linear algorithm to catch a linear link. However, decision trees are much better to catch a non linear link between predictors and outcome. Because there is no silver bullet, we advise you to check both algorithms with your own datasets to have an idea of what to use.
 
@@ -363,7 +363,7 @@ xgb.plot.importance(importance_matrix = importance_matrix)
 You can dump the tree you learned using `xgb.dump` into a text file.
 
 ```{r dump, message=T, warning=F}
-xgb.dump(bst, with_stats = T)
+xgb.dump(bst, with_stats = TRUE)
 ```
 
 You can plot the trees from your model using ```xgb.plot.tree``
@@ -410,7 +410,7 @@ In some very specific cases, like when you want to pilot **XGBoost** from `caret
 
 ```{r saveLoadRBinVectorModel, message=F, warning=F}
 # save model to R's raw vector
-rawVec <- xgb.save.raw(bst)
+rawVec <- xgb.serialize(bst)
 
 # print class
 print(class(rawVec))

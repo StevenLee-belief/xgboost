@@ -16,9 +16,12 @@
 package ml.dmlc.xgboost4j.java;
 
 import java.io.*;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.KryoSerializable;
@@ -34,16 +37,7 @@ public class Booster implements Serializable, KryoSerializable {
   private static final Log logger = LogFactory.getLog(Booster.class);
   // handle to the booster.
   private long handle = 0;
-
-  //load native library
-  static {
-    try {
-      NativeLibLoader.initXGBoost();
-    } catch (IOException ex) {
-      logger.error("load native library failed.");
-      logger.error(ex);
-    }
-  }
+  private int version = 0;
 
   /**
    * Create a new Booster with empty stage.
@@ -55,7 +49,6 @@ public class Booster implements Serializable, KryoSerializable {
    */
   Booster(Map<String, Object> params, DMatrix[] cacheMats) throws XGBoostError {
     init(cacheMats);
-    setParam("seed", "0");
     setParams(params);
   }
 
@@ -70,7 +63,7 @@ public class Booster implements Serializable, KryoSerializable {
       throw new NullPointerException("modelPath : null");
     }
     Booster ret = new Booster(new HashMap<String, Object>(), new DMatrix[0]);
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterLoadModel(ret.handle, modelPath));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModel(ret.handle, modelPath));
     return ret;
   }
 
@@ -93,7 +86,7 @@ public class Booster implements Serializable, KryoSerializable {
     }
     in.close();
     Booster ret = new Booster(new HashMap<String, Object>(), new DMatrix[0]);
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(ret.handle,os.toByteArray()));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(ret.handle,os.toByteArray()));
     return ret;
   }
 
@@ -105,7 +98,7 @@ public class Booster implements Serializable, KryoSerializable {
    * @throws XGBoostError native error
    */
   public final void setParam(String key, Object value) throws XGBoostError {
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterSetParam(handle, key, value.toString()));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSetParam(handle, key, value.toString()));
   }
 
   /**
@@ -123,6 +116,60 @@ public class Booster implements Serializable, KryoSerializable {
   }
 
   /**
+   * Get attributes stored in the Booster as a Map.
+   *
+   * @return A map contain attribute pairs.
+   * @throws XGBoostError native error
+   */
+  public final Map<String, String> getAttrs() throws XGBoostError {
+    String[][] attrNames = new String[1][];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetAttrNames(handle, attrNames));
+    Map<String, String> attrMap = new HashMap<>();
+    for (String name: attrNames[0]) {
+      attrMap.put(name, this.getAttr(name));
+    }
+    return attrMap;
+  }
+
+  /**
+   * Get attribute from the Booster.
+   *
+   * @param key   attribute key
+   * @return attribute value
+   * @throws XGBoostError native error
+   */
+  public final String getAttr(String key) throws XGBoostError {
+    String[] attrValue = new String[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetAttr(handle, key, attrValue));
+    return attrValue[0];
+  }
+
+  /**
+   * Set attribute to the Booster.
+   *
+   * @param key   attribute key
+   * @param value attribute value
+   * @throws XGBoostError native error
+   */
+  public final void setAttr(String key, String value) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSetAttr(handle, key, value));
+  }
+
+  /**
+   * Set attributes to the Booster.
+   *
+   * @param attrs attributes key-value map
+   * @throws XGBoostError native error
+   */
+  public void setAttrs(Map<String, String> attrs) throws XGBoostError {
+    if (attrs != null) {
+      for (Map.Entry<String, String> entry : attrs.entrySet()) {
+        setAttr(entry.getKey(), entry.getValue());
+      }
+    }
+  }
+
+  /**
    * Update the booster for one iteration.
    *
    * @param dtrain training data
@@ -130,7 +177,7 @@ public class Booster implements Serializable, KryoSerializable {
    * @throws XGBoostError native error
    */
   public void update(DMatrix dtrain, int iter) throws XGBoostError {
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterUpdateOneIter(handle, iter, dtrain.getHandle()));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterUpdateOneIter(handle, iter, dtrain.getHandle()));
   }
 
   /**
@@ -141,7 +188,7 @@ public class Booster implements Serializable, KryoSerializable {
    * @throws XGBoostError native error
    */
   public void update(DMatrix dtrain, IObjective obj) throws XGBoostError {
-    float[][] predicts = this.predict(dtrain, true, 0, false);
+    float[][] predicts = this.predict(dtrain, true, 0, false, false);
     List<float[]> gradients = obj.getGradient(predicts, dtrain);
     boost(dtrain, gradients.get(0), gradients.get(1));
   }
@@ -159,7 +206,7 @@ public class Booster implements Serializable, KryoSerializable {
       throw new AssertionError(String.format("grad/hess length mismatch %s / %s", grad.length,
               hess.length));
     }
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterBoostOneIter(handle,
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterBoostOneIter(handle,
             dtrain.getHandle(), grad, hess));
   }
 
@@ -175,9 +222,36 @@ public class Booster implements Serializable, KryoSerializable {
   public String evalSet(DMatrix[] evalMatrixs, String[] evalNames, int iter) throws XGBoostError {
     long[] handles = dmatrixsToHandles(evalMatrixs);
     String[] evalInfo = new String[1];
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterEvalOneIter(handle, iter, handles, evalNames,
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterEvalOneIter(handle, iter, handles, evalNames,
             evalInfo));
     return evalInfo[0];
+  }
+
+  /**
+   * evaluate with given dmatrixs.
+   *
+   * @param evalMatrixs dmatrixs for evaluation
+   * @param evalNames   name for eval dmatrixs, used for check results
+   * @param iter        current eval iteration
+   * @param metricsOut  output array containing the evaluation metrics for each evalMatrix
+   * @return eval information
+   * @throws XGBoostError native error
+   */
+  public String evalSet(DMatrix[] evalMatrixs, String[] evalNames, int iter, float[] metricsOut)
+          throws XGBoostError {
+    String stringFormat = evalSet(evalMatrixs, evalNames, iter);
+    String[] metricPairs = stringFormat.split("\t");
+    for (int i = 1; i < metricPairs.length; i++) {
+      String value = metricPairs[i].split(":")[1];
+      if (value.equalsIgnoreCase("nan")) {
+        metricsOut[i - 1] = Float.NaN;
+      } else if (value.equalsIgnoreCase("-nan")) {
+        metricsOut[i - 1] = -Float.NaN;
+      } else {
+        metricsOut[i - 1] = Float.valueOf(value);
+      }
+    }
+    return stringFormat;
   }
 
   /**
@@ -191,6 +265,12 @@ public class Booster implements Serializable, KryoSerializable {
    */
   public String evalSet(DMatrix[] evalMatrixs, String[] evalNames, IEvaluation eval)
           throws XGBoostError {
+    // Hopefully, a tiny redundant allocation wouldn't hurt.
+    return evalSet(evalMatrixs, evalNames, eval, new float[evalNames.length]);
+  }
+
+  public String evalSet(DMatrix[] evalMatrixs, String[] evalNames, IEvaluation eval,
+                        float[] metricsOut) throws XGBoostError {
     String evalInfo = "";
     for (int i = 0; i < evalNames.length; i++) {
       String evalName = evalNames[i];
@@ -198,6 +278,7 @@ public class Booster implements Serializable, KryoSerializable {
       float evalResult = eval.eval(predict(evalMat), evalMat);
       String evalMetric = eval.getMetric();
       evalInfo += String.format("\t%s-%s:%f", evalName, evalMetric, evalResult);
+      metricsOut[i] = evalResult;
     }
     return evalInfo;
   }
@@ -209,12 +290,14 @@ public class Booster implements Serializable, KryoSerializable {
    * @param outputMargin output margin
    * @param treeLimit    limit number of trees, 0 means all trees.
    * @param predLeaf     prediction minimum to keep leafs
+   * @param predContribs prediction feature contributions
    * @return predict results
    */
   private synchronized float[][] predict(DMatrix data,
                                          boolean outputMargin,
                                          int treeLimit,
-                                         boolean predLeaf) throws XGBoostError {
+                                         boolean predLeaf,
+                                         boolean predContribs) throws XGBoostError {
     int optionMask = 0;
     if (outputMargin) {
       optionMask = 1;
@@ -222,8 +305,11 @@ public class Booster implements Serializable, KryoSerializable {
     if (predLeaf) {
       optionMask = 2;
     }
+    if (predContribs) {
+      optionMask = 4;
+    }
     float[][] rawPredicts = new float[1][];
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterPredict(handle, data.getHandle(), optionMask,
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterPredict(handle, data.getHandle(), optionMask,
             treeLimit, rawPredicts));
     int row = (int) data.rowNum();
     int col = rawPredicts[0].length / row;
@@ -246,7 +332,19 @@ public class Booster implements Serializable, KryoSerializable {
    * @throws XGBoostError
    */
   public float[][] predictLeaf(DMatrix data, int treeLimit) throws XGBoostError {
-    return this.predict(data, false, treeLimit, true);
+    return this.predict(data, false, treeLimit, true, false);
+  }
+
+  /**
+   * Output feature contributions toward predictions of given data
+   *
+   * @param data The input data.
+   * @param treeLimit Number of trees to include, 0 means all trees.
+   * @return The feature contributions and bias.
+   * @throws XGBoostError
+   */
+  public float[][] predictContrib(DMatrix data, int treeLimit) throws XGBoostError {
+    return this.predict(data, false, treeLimit, true, true);
   }
 
   /**
@@ -257,7 +355,7 @@ public class Booster implements Serializable, KryoSerializable {
    * @throws XGBoostError native error
    */
   public float[][] predict(DMatrix data) throws XGBoostError {
-    return this.predict(data, false, 0, false);
+    return this.predict(data, false, 0, false, false);
   }
 
   /**
@@ -268,7 +366,7 @@ public class Booster implements Serializable, KryoSerializable {
    * @return predict results
    */
   public float[][] predict(DMatrix data, boolean outputMargin) throws XGBoostError {
-    return this.predict(data, outputMargin, 0, false);
+    return this.predict(data, outputMargin, 0, false, false);
   }
 
   /**
@@ -280,7 +378,7 @@ public class Booster implements Serializable, KryoSerializable {
    * @return predict results
    */
   public float[][] predict(DMatrix data, boolean outputMargin, int treeLimit) throws XGBoostError {
-    return this.predict(data, outputMargin, treeLimit, false);
+    return this.predict(data, outputMargin, treeLimit, false, false);
   }
 
   /**
@@ -289,7 +387,7 @@ public class Booster implements Serializable, KryoSerializable {
    * @param modelPath model path
    */
   public void saveModel(String modelPath) throws XGBoostError{
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterSaveModel(handle, modelPath));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSaveModel(handle, modelPath));
   }
 
   /**
@@ -313,6 +411,11 @@ public class Booster implements Serializable, KryoSerializable {
    * @throws XGBoostError native error
    */
   public String[] getModelDump(String featureMap, boolean withStats) throws XGBoostError {
+    return getModelDump(featureMap, withStats, "text");
+  }
+
+  public String[] getModelDump(String featureMap, boolean withStats, String format)
+         throws XGBoostError {
     int statsFlag = 0;
     if (featureMap == null) {
       featureMap = "";
@@ -320,21 +423,91 @@ public class Booster implements Serializable, KryoSerializable {
     if (withStats) {
       statsFlag = 1;
     }
+    if (format == null) {
+      format = "text";
+    }
     String[][] modelInfos = new String[1][];
-    JNIErrorHandle.checkCall(
-            XGBoostJNI.XGBoosterDumpModel(handle, featureMap, statsFlag, modelInfos));
+    XGBoostJNI.checkCall(
+            XGBoostJNI.XGBoosterDumpModelEx(handle, featureMap, statsFlag, format, modelInfos));
     return modelInfos[0];
+  }
+
+  /**
+   * Get the dump of the model as a string array with specified feature names.
+   *
+   * @param featureNames Names of the features.
+   * @return dumped model information
+   * @throws XGBoostError
+   */
+  public String[] getModelDump(String[] featureNames, boolean withStats) throws XGBoostError {
+    return getModelDump(featureNames, withStats, "text");
+  }
+
+  public String[] getModelDump(String[] featureNames, boolean withStats, String format)
+    throws XGBoostError {
+    int statsFlag = 0;
+    if (withStats) {
+      statsFlag = 1;
+    }
+    if (format == null) {
+      format = "text";
+    }
+    String[][] modelInfos = new String[1][];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterDumpModelExWithFeatures(
+        handle, featureNames, statsFlag, format, modelInfos));
+    return modelInfos[0];
+  }
+
+  /**
+   * Supported feature importance types
+   *
+   * WEIGHT = Number of nodes that a feature was used to determine a split
+   * GAIN = Average information gain per split for a feature
+   * COVER = Average cover per split for a feature
+   * TOTAL_GAIN = Total information gain over all splits of a feature
+   * TOTAL_COVER = Total cover over all splits of a feature
+   */
+  public static class FeatureImportanceType {
+    public static final String WEIGHT = "weight";
+    public static final String GAIN = "gain";
+    public static final String COVER = "cover";
+    public static final String TOTAL_GAIN = "total_gain";
+    public static final String TOTAL_COVER = "total_cover";
+    public static final Set<String> ACCEPTED_TYPES = new HashSet<>(
+            Arrays.asList(WEIGHT, GAIN, COVER, TOTAL_GAIN, TOTAL_COVER));
+  }
+
+  /**
+   * Get importance of each feature with specified feature names.
+   *
+   * @return featureScoreMap  key: feature name, value: feature importance score, can be nill.
+   * @throws XGBoostError native error
+   */
+  public Map<String, Integer> getFeatureScore(String[] featureNames) throws XGBoostError {
+    String[] modelInfos = getModelDump(featureNames, false);
+    return getFeatureWeightsFromModel(modelInfos);
   }
 
   /**
    * Get importance of each feature
    *
-   * @return featureMap  key: feature index, value: feature importance score, can be nill
+   * @return featureScoreMap  key: feature index, value: feature importance score, can be nill
    * @throws XGBoostError native error
    */
   public Map<String, Integer> getFeatureScore(String featureMap) throws XGBoostError {
     String[] modelInfos = getModelDump(featureMap, false);
-    Map<String, Integer> featureScore = new HashMap<String, Integer>();
+    return getFeatureWeightsFromModel(modelInfos);
+  }
+
+  /**
+   * Get the importance of each feature based purely on weights (number of splits)
+   *
+   * @return featureScoreMap key: feature index,
+   * value: feature importance score based on weight
+   * @throws XGBoostError native error
+   */
+  private Map<String, Integer> getFeatureWeightsFromModel(String[] modelInfos) throws XGBoostError {
+    Map<String, Integer> featureScore = new HashMap<>();
     for (String tree : modelInfos) {
       for (String node : tree.split("\n")) {
         String[] array = node.split("\\[");
@@ -354,6 +527,94 @@ public class Booster implements Serializable, KryoSerializable {
   }
 
   /**
+   * Get the feature importances for gain or cover (average or total)
+   *
+   * @return featureImportanceMap key: feature index,
+   * values: feature importance score based on gain or cover
+   * @throws XGBoostError native error
+   */
+  public Map<String, Double> getScore(
+          String[] featureNames, String importanceType) throws XGBoostError {
+    String[] modelInfos = getModelDump(featureNames, true);
+    return getFeatureImportanceFromModel(modelInfos, importanceType);
+  }
+
+  /**
+   * Get the feature importances for gain or cover (average or total), with feature names
+   *
+   * @return featureImportanceMap key: feature name,
+   * values: feature importance score based on gain or cover
+   * @throws XGBoostError native error
+   */
+  public Map<String, Double> getScore(
+          String featureMap, String importanceType) throws XGBoostError {
+    String[] modelInfos = getModelDump(featureMap, true);
+    return getFeatureImportanceFromModel(modelInfos, importanceType);
+  }
+
+  /**
+   * Get the importance of each feature based on information gain or cover
+   *
+   * @return featureImportanceMap key: feature index, value: feature importance score
+   * based on information gain or cover
+   * @throws XGBoostError native error
+   */
+  private Map<String, Double> getFeatureImportanceFromModel(
+          String[] modelInfos, String importanceType) throws XGBoostError {
+    if (!FeatureImportanceType.ACCEPTED_TYPES.contains(importanceType)) {
+      throw new AssertionError(String.format("Importance type %s is not supported",
+              importanceType));
+    }
+    Map<String, Double> importanceMap = new HashMap<>();
+    Map<String, Double> weightMap = new HashMap<>();
+    if (importanceType.equals(FeatureImportanceType.WEIGHT)) {
+      Map<String, Integer> importanceWeights = getFeatureWeightsFromModel(modelInfos);
+      for (String feature: importanceWeights.keySet()) {
+        importanceMap.put(feature, new Double(importanceWeights.get(feature)));
+      }
+      return importanceMap;
+    }
+    /* Each split in the tree has this text form:
+    "0:[f28<-9.53674316e-07] yes=1,no=2,missing=1,gain=4000.53101,cover=1628.25"
+    So the line has to be split according to whether cover or gain is desired */
+    String splitter = "gain=";
+    if (importanceType.equals(FeatureImportanceType.COVER)
+        || importanceType.equals(FeatureImportanceType.TOTAL_COVER)) {
+      splitter = "cover=";
+    }
+    for (String tree: modelInfos) {
+      for (String node: tree.split("\n")) {
+        String[] array = node.split("\\[");
+        if (array.length == 1) {
+          continue;
+        }
+        String[] fidWithImportance = array[1].split("\\]");
+        // Extract gain or cover from string after closing bracket
+        Double importance = Double.parseDouble(
+            fidWithImportance[1].split(splitter)[1].split(",")[0]
+        );
+        String fid = fidWithImportance[0].split("<")[0];
+        if (importanceMap.containsKey(fid)) {
+          importanceMap.put(fid, importance + importanceMap.get(fid));
+          weightMap.put(fid, 1d + weightMap.get(fid));
+        } else {
+          importanceMap.put(fid, importance);
+          weightMap.put(fid, 1d);
+        }
+      }
+    }
+    /* By default we calculate total gain and total cover.
+    Divide by the number of nodes per feature to get gain / cover */
+    if (importanceType.equals(FeatureImportanceType.COVER)
+        || importanceType.equals(FeatureImportanceType.GAIN)) {
+      for (String fid: importanceMap.keySet()) {
+        importanceMap.put(fid, importanceMap.get(fid)/weightMap.get(fid));
+      }
+    }
+    return importanceMap;
+  }
+
+  /**
    * Save the model as byte array representation.
    * Write these bytes to a file will give compatible format with other xgboost bindings.
    *
@@ -369,8 +630,17 @@ public class Booster implements Serializable, KryoSerializable {
       statsFlag = 1;
     }
     String[][] modelInfos = new String[1][];
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterDumpModel(handle, "", statsFlag, modelInfos));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterDumpModelEx(handle, "", statsFlag, "text",
+            modelInfos));
     return modelInfos[0];
+  }
+
+  public int getVersion() {
+    return this.version;
+  }
+
+  public void setVersion(int version) {
+    this.version = version;
   }
 
   /**
@@ -380,7 +650,7 @@ public class Booster implements Serializable, KryoSerializable {
    */
   public byte[] toByteArray() throws XGBoostError {
     byte[][] bytes = new byte[1][];
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterGetModelRaw(this.handle, bytes));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetModelRaw(this.handle, bytes));
     return bytes[0];
   }
 
@@ -392,17 +662,30 @@ public class Booster implements Serializable, KryoSerializable {
    */
   int loadRabitCheckpoint() throws XGBoostError {
     int[] out = new int[1];
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterLoadRabitCheckpoint(this.handle, out));
-    return out[0];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadRabitCheckpoint(this.handle, out));
+    version = out[0];
+    return version;
   }
 
   /**
-   * Save the booster model into thread-local rabit checkpoint.
+   * Save the booster model into thread-local rabit checkpoint and increment the version.
    * This is only used in distributed training.
    * @throws XGBoostError
    */
   void saveRabitCheckpoint() throws XGBoostError {
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterSaveRabitCheckpoint(this.handle));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterSaveRabitCheckpoint(this.handle));
+    version += 1;
+  }
+
+  /**
+   * Get number of model features.
+   * @return the number of features.
+   * @throws XGBoostError
+   */
+  public long getNumFeature() throws XGBoostError {
+    long[] numFeature = new long[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterGetNumFeature(this.handle, numFeature));
+    return numFeature[0];
   }
 
   /**
@@ -416,7 +699,7 @@ public class Booster implements Serializable, KryoSerializable {
       handles = dmatrixsToHandles(cacheMats);
     }
     long[] out = new long[1];
-    JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterCreate(handles, out));
+    XGBoostJNI.checkCall(XGBoostJNI.XGBoosterCreate(handles, out));
 
     handle = out[0];
   }
@@ -438,6 +721,7 @@ public class Booster implements Serializable, KryoSerializable {
   // making Booster serializable
   private void writeObject(java.io.ObjectOutputStream out) throws IOException {
     try {
+      out.writeInt(version);
       out.writeObject(this.toByteArray());
     } catch (XGBoostError ex) {
       ex.printStackTrace();
@@ -449,8 +733,9 @@ public class Booster implements Serializable, KryoSerializable {
           throws IOException, ClassNotFoundException {
     try {
       this.init(null);
+      this.version = in.readInt();
       byte[] bytes = (byte[])in.readObject();
-      JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
+      XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
     } catch (XGBoostError ex) {
       ex.printStackTrace();
       logger.error(ex.getMessage());
@@ -475,12 +760,11 @@ public class Booster implements Serializable, KryoSerializable {
     try {
       byte[] serObj = this.toByteArray();
       int serObjSize = serObj.length;
-      System.out.println("==== serialized obj size " + serObjSize);
       output.writeInt(serObjSize);
+      output.writeInt(version);
       output.write(serObj);
     } catch (XGBoostError ex) {
-      ex.printStackTrace();
-      logger.error(ex.getMessage());
+      logger.error(ex.getMessage(), ex);
     }
   }
 
@@ -489,13 +773,12 @@ public class Booster implements Serializable, KryoSerializable {
     try {
       this.init(null);
       int serObjSize = input.readInt();
-      System.out.println("==== the size of the object: " + serObjSize);
+      this.version = input.readInt();
       byte[] bytes = new byte[serObjSize];
       input.readBytes(bytes);
-      JNIErrorHandle.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
+      XGBoostJNI.checkCall(XGBoostJNI.XGBoosterLoadModelFromBuffer(this.handle, bytes));
     } catch (XGBoostError ex) {
-      ex.printStackTrace();
-      logger.error(ex.getMessage());
+      logger.error(ex.getMessage(), ex);
     }
   }
 }

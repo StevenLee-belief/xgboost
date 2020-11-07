@@ -37,14 +37,13 @@ param['scale_pos_weight'] = sum_wneg/sum_wpos
 param['eta'] = 0.1
 param['max_depth'] = 6
 param['eval_metric'] = 'auc'
-param['silent'] = 1
 param['nthread'] = 16
 
 # you can directly throw param in, though we want to watch multiple metrics here
 plst = list(param.items())+[('eval_metric', 'ams@0.15')]
 
 watchlist = [ (xgmat,'train') ]
-# boost 120 tres
+# boost 120 trees
 num_round = 120
 print ('loading data end, start to boost trees')
 bst = xgb.train( plst, xgmat, num_round, watchlist );

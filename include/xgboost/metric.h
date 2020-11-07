@@ -8,19 +8,48 @@
 #define XGBOOST_METRIC_H_
 
 #include <dmlc/registry.h>
+#include <xgboost/model.h>
+#include <xgboost/generic_parameters.h>
+#include <xgboost/data.h>
+#include <xgboost/base.h>
+#include <xgboost/host_device_vector.h>
+
 #include <vector>
 #include <string>
 #include <functional>
-#include "./data.h"
-#include "./base.h"
+#include <utility>
 
 namespace xgboost {
 /*!
  * \brief interface of evaluation metric used to evaluate model performance.
  *  This has nothing to do with training, but merely act as evaluation purpose.
  */
-class Metric {
+class Metric : public Configurable {
+ protected:
+  GenericParameter const* tparam_;
+
  public:
+  /*!
+   * \brief Configure the Metric with the specified parameters.
+   * \param args arguments to the objective function.
+   */
+  virtual void Configure(
+      const std::vector<std::pair<std::string, std::string> >&) {}
+  /*!
+   * \brief Load configuration from JSON object
+   * By default, metric has no internal configuration;
+   * override this function to maintain internal configuration
+   * \param in JSON object containing the configuration
+   */
+  void LoadConfig(Json const&) override {}
+  /*!
+   * \brief Save configuration to JSON object
+   * By default, metric has no internal configuration;
+   * override this function to maintain internal configuration
+   * \param out pointer to output JSON object
+   */
+  void SaveConfig(Json*) const override {}
+
   /*!
    * \brief evaluate a specific metric
    * \param preds prediction
@@ -29,21 +58,22 @@ class Metric {
    *        the average statistics across all the node,
    *        this is only supported by some metrics
    */
-  virtual float Eval(const std::vector<float>& preds,
-                     const MetaInfo& info,
-                     bool distributed) const = 0;
+  virtual bst_float Eval(const HostDeviceVector<bst_float>& preds,
+                         const MetaInfo& info,
+                         bool distributed) = 0;
   /*! \return name of metric */
   virtual const char* Name() const = 0;
   /*! \brief virtual destructor */
-  virtual ~Metric() {}
+  ~Metric() override = default;
   /*!
    * \brief create a metric according to name.
    * \param name name of the metric.
-   *  name can be in form metric[@]param
-   *  and the name will be matched in the registry.
+   *        name can be in form metric[@]param and the name will be matched in the
+   *        registry.
+   * \param tparam A global generic parameter
    * \return the created metric.
    */
-  static Metric* Create(const std::string& name);
+  static Metric* Create(const std::string& name, GenericParameter const* tparam);
 };
 
 /*!
